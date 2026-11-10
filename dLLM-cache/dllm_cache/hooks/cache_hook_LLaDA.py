@@ -132,20 +132,32 @@ def refresh_index(
     transfer_ratio: float = 0.5,
     layer_id: int = 0,
     similarity_threshold: Optional[float] = None,
+    change_metric: str = "cosine",
 ) -> torch.Tensor:
     batch_size, gen_len, d_model = new_features.shape
     num_replace = int(gen_len * transfer_ratio)
-    cos_sim = torch.nn.functional.cosine_similarity(
-        new_features, cached_features, dim=-1
-    )
+    if change_metric == "cosine":
+        scores = torch.nn.functional.cosine_similarity(
+            new_features, cached_features, dim=-1
+        )
+        largest = False
+    elif change_metric == "relative_l2":
+        if similarity_threshold is not None:
+            raise ValueError("similarity_threshold only supports cosine similarity")
+        scores = torch.linalg.vector_norm(
+            new_features - cached_features, dim=-1
+        ) / torch.linalg.vector_norm(cached_features, dim=-1).clamp_min(1e-6)
+        largest = True
+    else:
+        raise ValueError(f"Unknown change_metric: {change_metric}")
     if similarity_threshold is not None:
         if batch_size != 1:
             raise ValueError("Threshold-based cache updates currently require batch size 1")
         if not -1.0 <= similarity_threshold <= 1.0:
             raise ValueError("similarity_threshold must be between -1 and 1")
-        num_candidates = int((cos_sim[0] < similarity_threshold).sum().item())
+        num_candidates = int((scores[0] < similarity_threshold).sum().item())
         num_replace = min(max(1, num_replace), max(1, num_candidates))
-    transfer_index = torch.topk(cos_sim, largest=False, k=num_replace).indices
+    transfer_index = torch.topk(scores, largest=largest, k=num_replace).indices
     return transfer_index
 
 
@@ -285,6 +297,7 @@ def cache_hook_feature(
             index = refresh_index(
                 v_gen, kv_cache_gen["v"], transfer_ratio, self.layer_id,
                 feature_cache.similarity_threshold,
+                feature_cache.change_metric,
             )
             index_expanded = index.unsqueeze(-1).expand(-1, -1, dim)
             x_gen_selected = torch.gather(x_gen_normed, dim=1, index=index_expanded)
@@ -354,6 +367,7 @@ def cache_hook_feature(
             index = refresh_index(
                 v_gen, kv_cache_gen["v"], transfer_ratio, self.layer_id,
                 feature_cache.similarity_threshold,
+                feature_cache.change_metric,
             )
             index_expanded = index.unsqueeze(-1).expand(-1, -1, dim)
             x_gen_selected = torch.gather(x_gen_normed, dim=1, index=index_expanded)

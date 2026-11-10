@@ -19,6 +19,7 @@ class dLLMCache(metaclass=Singleton):
     prompt_length: int
     transfer_ratio: float
     similarity_threshold: Optional[float]
+    change_metric: str
     __cache: defaultdict
     __step_counter: defaultdict
 
@@ -30,6 +31,7 @@ class dLLMCache(metaclass=Singleton):
         cfg_interval_steps: int = 1,
         transfer_ratio: float = 0.0,
         similarity_threshold: Optional[float] = None,
+        change_metric: str = "cosine",
     ) -> "dLLMCache":
         ins = cls()
         setattr(ins, "prompt_interval_steps", prompt_interval_steps)
@@ -37,6 +39,7 @@ class dLLMCache(metaclass=Singleton):
         setattr(ins, "cfg_interval_steps", cfg_interval_steps)
         setattr(ins, "transfer_ratio", transfer_ratio)
         setattr(ins, "similarity_threshold", similarity_threshold)
+        setattr(ins, "change_metric", change_metric)
         ins.init()
         return ins
 

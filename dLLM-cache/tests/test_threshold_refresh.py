@@ -19,10 +19,10 @@ class ThresholdRefreshTest(unittest.TestCase):
         )
         self.cached = torch.tensor([[[1.0, 0.0]] * 4], dtype=torch.float32)
 
-    def select(self, ratio, threshold=None):
+    def select(self, ratio, threshold=None, metric="cosine"):
         return refresh_index(
             self.current, self.cached, transfer_ratio=ratio,
-            similarity_threshold=threshold,
+            similarity_threshold=threshold, change_metric=metric,
         )[0].tolist()
 
     def test_default_keeps_fixed_ratio(self):
@@ -41,6 +41,15 @@ class ThresholdRefreshTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "batch size 1"):
             refresh_index(current, cached, transfer_ratio=0.25,
                           similarity_threshold=0.7)
+
+    def test_relative_l2_detects_magnitude_change(self):
+        self.current[0, 3] = self.cached[0, 3] * 3
+        self.assertEqual(self.select(0.25), [2])
+        self.assertEqual(self.select(0.25, metric="relative_l2"), [3])
+
+    def test_relative_l2_rejects_cosine_threshold(self):
+        with self.assertRaisesRegex(ValueError, "only supports cosine"):
+            self.select(0.25, threshold=0.7, metric="relative_l2")
 
 
 if __name__ == "__main__":

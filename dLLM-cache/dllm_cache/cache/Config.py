@@ -9,3 +9,4 @@ class dLLMCacheConfig:
     transfer_ratio: float = 0.0
     cfg_interval_steps: int = 1
     similarity_threshold: Optional[float] = None
+    change_metric: str = "cosine"
