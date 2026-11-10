@@ -1,5 +1,6 @@
 import torch
 from collections import defaultdict
+from typing import Optional
 
 
 class Singleton(type):
@@ -17,6 +18,7 @@ class dLLMCache(metaclass=Singleton):
     cfg_interval_steps: int
     prompt_length: int
     transfer_ratio: float
+    similarity_threshold: Optional[float]
     __cache: defaultdict
     __step_counter: defaultdict
 
@@ -27,12 +29,14 @@ class dLLMCache(metaclass=Singleton):
         gen_interval_steps: int = 1,
         cfg_interval_steps: int = 1,
         transfer_ratio: float = 0.0,
+        similarity_threshold: Optional[float] = None,
     ) -> "dLLMCache":
         ins = cls()
         setattr(ins, "prompt_interval_steps", prompt_interval_steps)
         setattr(ins, "gen_interval_steps", gen_interval_steps)
         setattr(ins, "cfg_interval_steps", cfg_interval_steps)
         setattr(ins, "transfer_ratio", transfer_ratio)
+        setattr(ins, "similarity_threshold", similarity_threshold)
         ins.init()
         return ins
 

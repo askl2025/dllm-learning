@@ -11,6 +11,7 @@ from utils import generate
 prompt_interval_steps = 100
 gen_interval_steps = 7
 transfer_ratio = 0.25
+similarity_threshold = None  # Set to a cosine similarity threshold for batch-size-1 updates.
 use_cache = True
 device = "cuda" if torch.cuda.is_available() else "cpu"
 gen_length = 256
@@ -37,6 +38,7 @@ if use_cache:
                 prompt_interval_steps=prompt_interval_steps,
                 gen_interval_steps=gen_interval_steps,
                 transfer_ratio=transfer_ratio,
+                similarity_threshold=similarity_threshold,
             )
         )
     )
@@ -105,6 +107,7 @@ while True:
                     prompt_interval_steps=prompt_interval_steps,
                     gen_interval_steps=gen_interval_steps,
                     transfer_ratio=transfer_ratio,
+                    similarity_threshold=similarity_threshold,
                 )
             )
         )

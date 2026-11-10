@@ -131,12 +131,20 @@ def refresh_index(
     cached_features: torch.Tensor = None,
     transfer_ratio: float = 0.5,
     layer_id: int = 0,
+    similarity_threshold: Optional[float] = None,
 ) -> torch.Tensor:
     batch_size, gen_len, d_model = new_features.shape
     num_replace = int(gen_len * transfer_ratio)
     cos_sim = torch.nn.functional.cosine_similarity(
         new_features, cached_features, dim=-1
     )
+    if similarity_threshold is not None:
+        if batch_size != 1:
+            raise ValueError("Threshold-based cache updates currently require batch size 1")
+        if not -1.0 <= similarity_threshold <= 1.0:
+            raise ValueError("similarity_threshold must be between -1 and 1")
+        num_candidates = int((cos_sim[0] < similarity_threshold).sum().item())
+        num_replace = min(max(1, num_replace), max(1, num_candidates))
     transfer_index = torch.topk(cos_sim, largest=False, k=num_replace).indices
     return transfer_index
 
@@ -275,7 +283,8 @@ def cache_hook_feature(
             x_gen_normed = self.attn_norm(x_gen)
             v_gen = self.v_proj(x_gen_normed)
             index = refresh_index(
-                v_gen, kv_cache_gen["v"], transfer_ratio, self.layer_id
+                v_gen, kv_cache_gen["v"], transfer_ratio, self.layer_id,
+                feature_cache.similarity_threshold,
             )
             index_expanded = index.unsqueeze(-1).expand(-1, -1, dim)
             x_gen_selected = torch.gather(x_gen_normed, dim=1, index=index_expanded)
@@ -343,7 +352,8 @@ def cache_hook_feature(
                 layer_id=self.layer_id, feature_name="kv_cache", cache_type="prompt"
             )
             index = refresh_index(
-                v_gen, kv_cache_gen["v"], transfer_ratio, self.layer_id
+                v_gen, kv_cache_gen["v"], transfer_ratio, self.layer_id,
+                feature_cache.similarity_threshold,
             )
             index_expanded = index.unsqueeze(-1).expand(-1, -1, dim)
             x_gen_selected = torch.gather(x_gen_normed, dim=1, index=index_expanded)
