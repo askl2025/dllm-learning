@@ -22,6 +22,10 @@ class SlowFastSampler:
         self.cycle_len_confidence_threshold = gen_kwargs.get("cycle_len_confidence_threshold", 0.3)
         self.cycle_length_stability_window = gen_kwargs.get("cycle_length_stability_window", 2)
         self.cycle_length_stability_std_dev_threshold = gen_kwargs.get("cycle_length_stability_std_dev_threshold", 1.0)
+        # Optional adjacent-step greedy agreement; only gates early exit.
+        self.prediction_consistency_threshold = gen_kwargs.get("prediction_consistency_threshold", None)
+        if self.prediction_consistency_threshold is not None and not 0 <= self.prediction_consistency_threshold <= 1:
+            raise ValueError("prediction_consistency_threshold must be None or between 0 and 1")
         self.high_confidence_threshold = gen_kwargs.get("high_confidence_threshold", 0.9)
         self.num_important_low_confidence_tokens = gen_kwargs.get("num_important_low_confidence_tokens", 3)
         self.max_sub_cycles_per_block = gen_kwargs.get("max_sub_cycles_per_block", 256)
@@ -53,6 +57,7 @@ class SlowFastSampler:
         block_end_in_gen = (block_idx + 1) * self.block_length
         sub_cycle_determined_per_item = torch.zeros(batch_size, dtype=torch.bool, device=x.device)
         history_per_item = [collections.deque(maxlen=self.cycle_length_stability_window) for _ in range(batch_size)]
+        previous_predictions = None
 
         for k_step in range(self.k_exploration_steps):
             if self.cfg_scale > 0.0: 
@@ -65,6 +70,7 @@ class SlowFastSampler:
                 logits_full = self.model(x, attention_mask=attention_mask).logits
             
             logits_gen_part = logits_full[:, prompt_length:]
+            current_predictions = logits_gen_part.argmax(dim=-1) if self.prediction_consistency_threshold is not None else None
             x0_gen = torch.argmax(self.add_gumbel_noise(logits_gen_part), dim=-1)
             p_gen = F.softmax(logits_gen_part, dim=-1)
             x0_p_gen = torch.gather(p_gen, dim=-1, index=x0_gen.unsqueeze(-1)).squeeze(-1)
@@ -104,11 +110,20 @@ class SlowFastSampler:
                             det_len = int(history_per_item[b_idx][-1])
                             actual_sub_cycle_length_per_item[b_idx] = max(1, min(det_len, self.block_length))
                             sub_cycle_determined_per_item[b_idx] = True
+                            if self.prediction_consistency_threshold is not None:
+                                scope = slice(observation_abs_start_in_gen, block_start_in_gen + det_len)
+                                masked = current_global_mask_index_gen_part[b_idx, scope]
+                                if masked.any():
+                                    sub_cycle_determined_per_item[b_idx] = previous_predictions is not None and (
+                                        (current_predictions[b_idx, scope][masked] == previous_predictions[b_idx, scope][masked])
+                                        .float().mean() >= self.prediction_consistency_threshold
+                                    )
                         else:
                             det_len = int(np.mean(hist_np))
                             actual_sub_cycle_length_per_item[b_idx] = max(1, min(det_len, self.block_length))
                             sub_cycle_determined_per_item[b_idx] = False if k_step < self.k_exploration_steps - 1 else True                 
 
+            previous_predictions = current_predictions
             #Initial fill
             num_to_fill_p1 = self.get_num_tokens_for_phase1_step(mask_in_current_block_abs_coords) 
             transfer_mask_p1 = torch.zeros_like(x0_gen, dtype=torch.bool)
@@ -135,6 +150,9 @@ class SlowFastSampler:
                                     abs_indices_to_fill_in_gen = fill_op_abs_start_in_gen + top_k_indices_relative_to_fill_scope
                                     transfer_mask_p1[b_idx, abs_indices_to_fill_in_gen] = True
             x[:, prompt_length:][transfer_mask_p1] = x0_gen[transfer_mask_p1]
+            # Finish this step's fill before switching to the fast phase.
+            if sub_cycle_determined_per_item.all():
+                break
 
         # After k_exploration_steps, if any item's sub-cycle length is not determined, use a fallback.
         for b_idx in range(batch_size):
